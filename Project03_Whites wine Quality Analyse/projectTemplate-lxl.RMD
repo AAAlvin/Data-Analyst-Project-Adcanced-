@@ -1,0 +1,711 @@
+白葡萄酒品质探究
+========================================================
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+library(ggplot2)
+```
+
+```{r echo=FALSE, Load_the_Data}
+# 加载数据
+wwine <- read.csv('wineQualityWhites.csv')
+```
+
+## 分析之前
+
+#### **来源：**Paulo Cortez (Univ. Minho), Antonio Cerdeira, Fernando Almeida, Telmo Matos and Jose Reis (CVRVV) @ 2009
+
+#### **概述：**这个数据集包含4898种白葡萄酒的信息，其中有11个量化每种酒化学成分的变量以及至少3名葡萄酒专家对每种酒的质量进的评分，分数在 0（非常差）和 10（非常好）之间。
+
+#### **思考：**之前看数据分析相关的书，记得一位统计学专家用葡萄产地的降雨量和采光等条件和当年产出的葡萄酿成酒的销售价格建模，打破了品酒专家的评分体系，不知道这个数据集中的评分标准是怎样的呢，稍微有点好奇。
+
+#### **问题：**  
+- 提高白葡萄酒品质最重要的因素是什么？
+- 如果可能的话，我们可以通过检测酒中的成分来预测品酒师给出的评分么？
+
+
+## 1.单变量绘图选择
+> 首先输出一下该数据集的大致样子，有多少数据、多少变量以及输出一下描述统计，对数据集有一个基本的认识：
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+str(wwine)
+summary(wwine)
+
+```
+
+- 首先可以看到该有4898条数据和13个变量，没有缺失数据，这很棒！
+- X的数据类型貌似应该不是int而是factor，而且命名也怪怪的，我们修改成id好了
+- residual.sugar，free.sulfur.dioxide和total.sulfur.dioxide这三个变量中的最大数据都比上四分位数大了非常多，怀疑是异常数据，后面分析时候应该多多注意
+
+> 我们来修改一下X列：
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+wwine$X <- factor(wwine$X)
+
+library(reshape)
+wwine <- rename(wwine,c(X = "id")) 
+
+str(wwine)
+
+```
+
+### 1.1质量
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(aes(x = quality), data = wwine) +
+  geom_histogram(binwidth = 1, fill = 'dimgrey')+
+  scale_x_continuous(limits = c(2, 10), breaks = seq(2, 10, 1))
+
+table(wwine$quality)
+```
+
+- 由直方图和汇总信息可以看出，白葡萄酒的质量基本上呈正态分布，但是3、4分和8、9分都非常少，如果后面要进行相关性研究，可能会造成影响，所以这里吧3、4分合并，8、9分合并进行研究
+
+```{r echo=FALSE, warning=FALSE}
+transfer <- function(x) {
+    if (x<=4) {
+        result <- c("bad")
+    } else if (x<=5) {
+       result <- c("medium_low")
+    } else if (x<=6) {
+       result <- c("medium")
+    } else if (x<=7) {
+       result <- c("medium_high")
+    } else{
+       result <- c("excellent")
+    }
+    return(result)
+}
+
+wwine$grade <- mapply(transfer, wwine$quality)
+
+wwine$grade <- ordered(wwine$grade, 
+                     levels= c('bad','medium_low','medium',
+                               'medium_high','excellent'))
+ggplot(aes(x = grade), data = wwine) + geom_bar()+
+  labs(x='Grade',y='Count',
+       title='Visualize the distribution of Grade')
+```
+
+这样看起来好多了！下面来看看我比较感兴趣的变量
+
+### 1.2与酸度相关的量
+>由于fixed.acidity，volatile.acidity，citric.acid，pH都是跟酸度相关的量，所以放在这里一起对比研究了
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+library(gridExtra)
+
+p1 <- ggplot(aes(x = fixed.acidity), data = wwine) +
+  geom_histogram(fill = 'dimgrey') + scale_x_log10()+
+  labs(x='Fixed acidity( g / dm^3)',y='Count',
+       title='Barplot of log10(fixed.acidity)')
+
+p2 <- ggplot(aes(x = volatile.acidity), data = wwine) +
+  geom_histogram(fill = 'dimgrey') + scale_x_log10()+
+  labs(x='Volatile acidity( g / dm^3)',y='Count',
+       title='Barplot of log10(volatile.acidity)')
+
+p3 <- ggplot(aes(x = citric.acid), data = wwine) +
+  geom_histogram(fill = 'dimgrey') + scale_x_log10()+
+  labs(x='Citric acid( g / dm^3)',y='Count',
+       title='Barplot of log10(citric.acid)')
+
+p4 <- ggplot(aes(x = pH), data = wwine) +
+  geom_histogram(fill = 'dimgrey')+
+  labs(x='pH',y='Count',
+       title='Barplot of pH')
+
+grid.arrange(p1, p2, p3,p4, ncol = 2)
+
+```
+
+- pH在3.2左右呈正态分布
+- 不挥发酸与挥发酸在经历了取对数之后呈现近似正态分布
+- 柠檬酸在经历了取对数之后还是有明显的偏态
+
+### 1.3果糖与酒精之间转化的相关量
+>由于葡萄酒整理的发酵过程大致是果糖加酶加氧气生成乙醇和二氧化碳的过程，所以这里同时探究residual.sugar、density和alcohol 变量
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+p3 <- ggplot(aes(x = residual.sugar), data = wwine) +
+  geom_histogram(fill = 'dimgrey')+
+  scale_x_continuous(breaks = seq(0,65,5))+
+  labs(x='Residual sugar( g / dm^3)',y='Count',
+       title='Barplot of residual.sugar')
+
+p1 <- ggplot(aes(x = alcohol), data = wwine) +
+  geom_histogram(fill = 'dimgrey')+
+  scale_x_continuous(breaks = seq(8,14,1))+
+  labs(x='Alcohol(% by volume)',y='Count',
+       title='Barplot of alcohol')
+
+p2 <- ggplot(aes(x = density), data = wwine) +
+  geom_histogram(fill = 'dimgrey')+
+  scale_x_continuous(breaks = seq(0.98,1.04,0.005))+
+  labs(x='Density(g / cm^3)',y='Count',
+       title='Barplot of density')
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+- 酒精含量大致在8-15之间，查阅知网相关论文可知该数据十分准确，因为当酒精含量超过15%的时候会抑制发酵的过程  
+- 密度这里95%数据低于1g/cm^3，这是我们想看到的，因为葡萄酒主要是酒精与水的混合物，由于酒精密度低于水，所以两者的密度加权结果必然应该比水低  
+- 但是仍然看到会有少量葡萄酒的密度大于1，结合下面残留糖的直方图，因为该直方图可以看到有长尾，那么导致密度偏大的原因有没有可能是残留糖或者其他大分子物质过量导致的呢？我会在双变量或者多变量中继续进行研究  
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+p2 <- ggplot(aes(x = density), data = wwine) +
+  geom_histogram(fill = 'dimgrey') + scale_x_log10()+
+  scale_x_continuous(breaks = seq(0.98,1.04,0.005))+
+  labs(x='Density(g / cm^3)',y='Count',
+       title='Barplot of log10(density)')
+
+p1 <- ggplot(aes(x = alcohol), data = wwine) +
+  geom_histogram(fill = 'dimgrey') + scale_x_log10()+
+  scale_x_continuous(breaks = seq(8,14,1))+
+  labs(x='Alcohol(% by volume)',y='Count',
+       title='Barplot of log10(alcohol)')
+
+p3 <- ggplot(aes(x = residual.sugar), data = wwine) +
+  coord_cartesian(xlim = c(0.6,20))+
+  geom_histogram(binwidth = 0.05) + 
+  scale_x_log10(breaks = seq(0,20,2))+
+  labs(x='Residual sugar( g / dm^3)',y='Count',
+       title='Barplot of log10(residual.sugar)')
+
+grid.arrange(p1, p2, p3, ncol = 1)
+```
+
+- 对这三个变量取对数后发现密度的分布形状并没有太大的改变，还是右偏明显，想起之前发现的有三个变量的最大值远远大于上四分位数，密度如此呈现也许是这些大分子物质导致  
+- 取对数后残留糖呈现双峰分布，这很有意思，后面多变量分析的时候希望可以深入研究原因  
+
+### 1.4 SO2 and sulphates
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+p1 <- ggplot(aes(x = free.sulfur.dioxide), data = wwine) +
+  geom_histogram(fill = 'dimgrey') +
+  scale_x_continuous(breaks = seq(0,200,50))+
+  labs(x='Free sulfur dioxide(mg / dm^3)',y='Count',
+       title='Barplot of free.sulfur.dioxide')
+
+p2 <- ggplot(aes(x = total.sulfur.dioxide), data = wwine) +
+  geom_histogram(fill = 'dimgrey')+
+  labs(x='Total sulfur dioxide(mg / dm^3)',y='Count',
+       title='Barplot of total.sulfur.dioxide')
+
+p3 <- ggplot(aes(x = sulphates), data = wwine) +
+  geom_histogram(fill = 'dimgrey')+
+  labs(x='Sulphates(g / dm^3)',y='Count',
+       title='Barplot of sulphates')
+
+grid.arrange(p1, p2, p3, ncol = 2)
+```
+
+- 三者都有长尾效应，free.sulfur.dioxide在50左右分布，total.sulfur.dioxide则在150左右分布，硫酸盐基本在0.5左右分布，下面对三者取对数看有无变化：
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+p1 <- ggplot(aes(x = free.sulfur.dioxide), data = wwine) +
+  geom_histogram(fill = 'dimgrey') +scale_x_log10()+
+  labs(x='Free sulfur dioxide(mg / dm^3)',y='Count',
+       title='Barplot of log10(free.sulfur.dioxide)')
+
+p2 <- ggplot(aes(x = total.sulfur.dioxide), data = wwine) +
+  geom_histogram(fill = 'dimgrey')+scale_x_log10()+
+  labs(x='Total sulfur dioxide(mg / dm^3)',y='Count',
+       title='Barplot of log10(total.sulfur.dioxide)')
+
+p3 <- ggplot(aes(x = sulphates), data = wwine) +
+  geom_histogram(fill = 'dimgrey')+scale_x_log10()+
+  scale_x_continuous(breaks = seq(0,1.1,0.2))+
+  labs(x='Sulphates(g / dm^3)',y='Count',
+       title='Barplot of log10(sulphates)')
+
+grid.arrange(p1, p2, p3, ncol = 2)
+```
+
+- 取对数后硫酸盐转为正态分布，但是另外两种却同时显示左尾偏态
+
+### 1.5 氯化物
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+p1 <- ggplot(aes(x = chlorides), data = wwine) +
+  geom_histogram(fill = 'dimgrey',binwidth = 0.002)+
+  scale_x_continuous(breaks = seq(0,0.3,0.05))+
+  labs(x='Chlorides(g / dm^3)',y='Count',
+       title='Barplot of chlorides')
+
+p2 <- ggplot(aes(x = chlorides), data = wwine) +
+  geom_histogram(fill = 'dimgrey',binwidth = 0.01)+
+  scale_x_log10(breaks = seq(0,0.15,0.02))+
+  labs(x='Chlorides(g / dm^3)',y='Count',
+       title='Barplot of log10(chlorides)')
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+- 氯化物的浓度大部分为0.02-0.08g/dm3，且尾部效应极大，比如可以达到0.34，进行取对数后，图形变得稍微对称一点了
+
+## 问题回答 
+
+### 你的数据集结构是什么？  
+- 在白葡萄酒数据集中有4898条数据和13个变量，除去id和质量其他都是数值连续的变量，在我探究的过程中，我还将相似的变量放在一起研究，比如与酸度相关的变量：fixed.acidity，volatile.acidity，citric.acid，pH。
+
+### 你的数据集内感兴趣的主要特性有哪些？
+- 从单一变量分析过程中，我对糖和酒精的转换有很大的兴趣，尤其是残留糖与密度！
+
+### 你认为数据集内哪些其他特征可以帮助你探索兴趣特点？
+- 首先与残留糖相关性比较强的变量应该可以帮助我探索残留糖分与评分之间的关系，其次大分子物质的探究应该是探究密度大于1的葡萄酒口感的助力。
+
+### 根据数据集内已有变量，你是否创建了任何新变量？
+- 是的，我创建了一个grade的变量来帮助我探究葡萄酒评级与其他变量之间的关系。
+
+### 在已经探究的特性中，是否存在任何异常分布？你是否对数据进行一些操作，如清洁、调整或改变数据的形式？如果是，你为什么会这样做？
+- 经过单一变量的探究，pH，grade和alcohol是基本呈现正态分布的，其他变量都或多或少的呈现长尾分布，在经历了取对数的放大操作后，residual.sugar呈现双峰分布，citric.acid呈左尾分布，density呈右尾分布
+
+
+## 双变量绘图选择
+> 首先输出一下该数据集中所有的数值变量之间的相关性，看能不能有一些可以有趣的研究方向：
+
+### 2.1整体观感
+```{r echo=FALSE, warning=FALSE}
+wwine_cor <- subset(wwine, select = -id)
+wwine_cor <- subset(wwine_cor, select = -grade)
+cor(wwine_cor)
+```
+
+- 密度-残留糖相关性为0.84，密度-酒精为-0.78等能看到如此强的相关性与我们之间的分析基本一直，说明了葡萄酒的密度是跟果糖与酒精之间转化密切相关的。
+- 密度与酸度之间的相关性可以看出，与密度先关性最高的是稳定酸，考虑到在这个级别的分子量权重远不如含量高，所以这个相关性表明了稳定酸的含量大于柠檬酸远大于不稳定酸
+- 看到跟质量相关的这一栏中，能看到相关前三名一次是酒精含量（0.44），密度（0.31）和氯化物含量（0.21），意外的是质量与残糖量相关性特别低，不到0.1，这也许就是所有的葡萄酒都又苦又涩的原因吧。但是这几个量与质量相关性都不是特别高，也许这个评价系统有一定的随机性，也许数据量还是不太够，原因这里暂不分析，只针对数据呈现出来的进行探究
+
+```{r echo=FALSE, warning=FALSE, fig.width=15, fig.height=15}
+library(psych)
+pairs.panels(wwine)
+```
+
+- 输出多元矩阵图能看到一定的趋势，但是需要结合后面的双变量以及多变量一起分析
+
+### 2.2葡萄酒评分相关量-酒精含量
+```{r echo=FALSE, warning=FALSE}
+ggplot(aes(x = grade, y = alcohol), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  labs(x='Grade(between bad and excellent)',
+       y='Alcohol(g / dm^3)' ,
+       title='Scatter of alcohol across grade')
+```
+
+> 对评分与酒精含量输出散点图，增加透明度和抖动可看出些许相关性，但是不是很明显，那我们添加上箱线图看一下趋势会不会明显一点：
+
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(aes(x = grade, y = alcohol), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_boxplot(alpha = 1/5, color = '#03A89E')+
+  stat_summary(fun.y = 'mean', geom = 'point', color='red')+
+  labs(x='Grade(between bad and excellent)',
+       y='Alcohol(g / dm^3)' ,
+       title='Scatter of alcohol across grade')
+
+```
+
+- 结合箱线图和散点图可以看出葡萄酒质量除了最差一档之外，品质依次根据就酒精含量升高而升高
+- 至于为什么最差的葡萄酒酒精含量有异常，也许是因为这一档里面的杂质含量影响了口感？结合之前的多元矩阵图可以看出在grade最差的一档出有转折的是density，total.sulfur.dioxide，free.sulfur.dioxide，chlorides和citric.acid。这几个都是可能出现上面变化的因素，也许在多变量里面可以深入探究一下
+- 这些变量与酒精浓度与评级的形状相似或相反，说明他们他们中这些化学物质跟酒精生成的化学变化相关，要么是促进或者抑制，下面就研究一下酒精浓度与这些量有怎样的关系
+
+### 2.3影响酒精含量的变量探究
+```{r echo=FALSE,warning=FALSE,message = FALSE,fig.width=15, fig.height=15}
+
+p1 <- ggplot(aes(x = alcohol, y = total.sulfur.dioxide), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  labs(x='Alcohol(% by volume)',
+       y='Total sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of alcohol across total.sulfur.dioxide')
+
+p2 <- ggplot(aes(x = alcohol, y = free.sulfur.dioxide), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  labs(x='Alcohol(% by volume)',
+       y='Free sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of alcohol across free.sulfur.dioxide')
+
+p3 <- ggplot(aes(x = alcohol, y = chlorides), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_y_continuous(limits = c(0,0.15))+
+  labs(x='Alcohol(% by volume)',
+       y='Chlorides(g / dm^3)' ,
+       title='Scatter of alcohol across chlorides')
+
+p4 <- ggplot(aes(x = alcohol, y = citric.acid), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_y_continuous(limits = c(0,1))+
+  labs(x='Alcohol(% by volume)',
+       y='Citric acid(g / dm^3)' ,
+       title='Scatter of alcohol across citric.acid')
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+cor.test(wwine$alcohol, wwine$total.sulfur.dioxide)
+cor.test(wwine$alcohol, wwine$free.sulfur.dioxide)
+cor.test(wwine$alcohol, wwine$chlorides)
+cor.test(wwine$alcohol, wwine$citric.acid)
+```
+
+- 从酒精含量与各变量之间的散点图可以看出，除了柠檬酸相关性非常弱，其他的变量都有比较强的相关性，且都是对酒精的含量呈抑制作用，结合知网的相关论文可知，二氧化硫被当做防腐剂加入葡萄酒中，具有杀菌等作用，过量也会抑制果糖向酒精的转化，跟上图显示十分吻合
+- 结合相关系数也能看出，影响酒精含量的因素中，最相关的是total.sulfur.dioxide，其次是chlorides，要是在酿制葡萄酒中能控制这些变量从而控制酒精含量在质量比较好的范围内，可能可以避免生产出评分较低的葡萄酒
+
+### 2.4葡萄酒评分相关量-密度
+```{r echo=FALSE, warning=FALSE}
+
+ggplot(aes(x = grade, y = density), data = wwine) + 
+  geom_jitter(alpha = 1/8)+ 
+  scale_y_continuous(limits = c(0.985,1.005))+
+  geom_boxplot(alpha = 1/5, color = '#03A89E')+
+  stat_summary(fun.y = 'mean', geom = 'point', color='red')+
+  labs(x='Grade(between bad and excellent)',
+       y='Density(g / dm^3)' ,
+       title='Scatter of density across grade')
+```
+
+- 密度从散点图中趋势也不甚明显，输出相线图后从中位数能看出一点规律，仍然是除了bad这一档的葡萄酒外，其他葡萄酒的密度与评分呈负相关，这正好符合上面酒精含量与评分的关系，因为酒精变多了，所以葡萄酒的整体密度变小
+- 说到密度，我更感兴趣的是除了酒精含量，那些大分子是否与密度又怎么样的关系呢，那么我们接着往下研究
+
+### 2.5大分子物质与葡萄酒密度的关系探究
+
+```{r echo=FALSE,warning=FALSE,message = FALSE,fig.width=15, fig.height=15}
+
+p1 <- ggplot(aes(x = density, y = fixed.acidity), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_x_continuous(limits = c(0.985,1.01))+
+  labs(x='Density(g / dm^3)',
+       y='Fixed acidity(g / dm^3)' ,
+       title='Scatter of density across fixed.acidity')
+
+p2 <- ggplot(aes(x = density, y = volatile.acidity), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_x_continuous(limits = c(0.985,1.01))+
+  labs(x='Density(g / dm^3)',
+       y='Volatile acidity(g / dm^3)' ,
+       title='Scatter of density across volatile.acidity')
+
+p3 <- ggplot(aes(x = density, y = citric.acid), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_x_continuous(limits = c(0.985,1.01))+
+  scale_y_continuous(limits = c(0,1.01))+
+  labs(x='Density(g / dm^3)',
+       y='Citric acid acidity(g / dm^3)' ,
+       title='Scatter of density across citric.acid')
+
+p4 <- ggplot(aes(x = density, y = residual.sugar), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_x_continuous(limits = c(0.985,1.01))+
+  scale_y_continuous(limits = c(0,30.01))+
+  labs(x='Density(g / dm^3)',
+       y='Residual sugar acidity(g / dm^3)' ,
+       title='Scatter of density across residual.sugar')
+
+p5 <- ggplot(aes(x = density, y = chlorides), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_x_continuous(limits = c(0.985,1.01))+
+  ylim(0, quantile(wwine$chlorides, 0.98))+
+  labs(x='Density(g / dm^3)',
+       y='chlorides(g / dm^3)' ,
+       title='Scatter of density across chlorides')
+
+p6 <- ggplot(aes(x = density, y = free.sulfur.dioxide), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_x_continuous(limits = c(0.985,1.01))+
+  ylim(0, quantile(wwine$free.sulfur.dioxide, 0.99))+
+  labs(x='Density(g / dm^3)',
+       y='Free sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across free.sulfur.dioxide')
+
+p7 <- ggplot(aes(x = density, y = total.sulfur.dioxide), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_x_continuous(limits = c(0.985,1.01))+
+  ylim(0, quantile(wwine$total.sulfur.dioxide, 0.99))+
+  labs(x='Density(g / dm^3)',
+       y='Total sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across total.sulfur.dioxide')
+
+p8 <- ggplot(aes(x = density, y = sulphates), data = wwine) + 
+  geom_jitter(alpha = 1/8)+
+  geom_smooth(method = 'lm',color = 'red')+
+  scale_x_continuous(limits = c(0.985,1.01))+
+  labs(x='Density(g / dm^3)',
+       y='sulphates(g / dm^3)' ,
+       title='Scatter of density across sulphates')
+
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, ncol = 2)
+```
+
+- 在输出了密度与各个大分子物质之间的散点图后，可大致看出他们与密度之间的关系，再结合之前输出的相关系数，在忽略分子量的前提下（因为在宏观这个量级，可以先忽略一个分子的总量而考虑所有分子式总和的重量），大致可以得出大分子量的多少顺序为：residual.sugar（括号内为相关系数：0.84）>total.sulfur.dioxide(0.53)>free.sulfur.dioxide(0.29)>fixed.acidity(0.27)>chlorides(0.26)其他物质的含量基本可以忽略不计了
+- 可以看到chlorides含量并不算多，但是chlorides与评分却有0.3的相关性，所以下面对chlorides与grade进行一下探究
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+ggplot(aes(x = grade, y = chlorides), data = wwine) + 
+  geom_jitter(alpha = 1/8)+ 
+  geom_boxplot(alpha = 1/5, color = '#03A89E')+
+  ylim(0, quantile(wwine$chlorides, 0.98))+
+  stat_summary(fun.y = 'mean', geom = 'point', color='red')+
+  labs(x='Grade(between bad and excellent)',
+       y='Chlorides(g / dm^3)' ,
+       title='Boxplot of chlorides across grade')+
+  scale_x_discrete(labels=c('bad','medium_low',
+                            'medium','medium_high','excellent'))
+
+```
+
+- 看来chlorides可以说是一个对评分相当重要的影响条件了，微小的改变就会产生不一样的影响，从上图也可以看出，想要得到优质的葡萄酒，降低chlorides含量总不会出错
+
+## 问题回答
+
+### 探讨你在这部分探究中观察到的一些关系。这些感兴趣的特性与数据集内其他特性有什么区别？
+当然我最关心的还是什么会影响到葡萄酒的评分，经过探究可以得知酒精含量、密度和氯化物是影响比较大的，其他物质虽然对评分有一定的影响，但是要么不是很明显，要么不是很有规律。
+
+
+### 你是否观察到主要特性与其他特性之间的有趣关系？
+有的，从密度与其他物质之间的关系，探究出虽然氯化物含量比较稀少，但是评分对氯化物非常敏感，而其他含量比较多的比如残留糖，貌似不太影响评分
+
+### 你发现最强的关系是什么？
+相关性最强的是残留糖与密度之间的关系，这是可以理解的，毕竟不可能所有的果糖都会分解成为酒精，很多物质都会抑制这个反应，甚至自己的生成物酒精都会来抑制正反应；其次相关性比较强的是密度与酒精含量，这个也符合这个化学反应的过程，毕竟葡萄酒里面的物质大部分是水和酒精和糖，其他物质的含量都是非常少的，所以对密度的影响，只要糖分恒定了，那酒精对密度的影响就不言而喻了
+
+## 多变量绘图选择
+> 由于单边量和双变量的研究过程中已经发现很多方向可以进行研究，这里只研究对回答问题最有效果的方向，以及最感兴趣的
+
+### Bad VS Excellent口感之争
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+wwine_boe <- subset(wwine, grade =='bad' | grade =='excellent')
+```
+
+> 由于评分中有过多数据干扰，且最差一档的葡萄酒与中间档还有很多变量范围上的交集，所以这里只保留的bad和Excellent两档的葡萄酒，看能否找出制作靠近口感优秀的葡萄酒的秘诀
+
+```{r echo=FALSE,warning=FALSE,message = FALSE,fig.width=15, fig.height=15}
+p1 <- ggplot(aes(x= alcohol, y= total.sulfur.dioxide),data = wwine_boe)+ 
+  geom_point(aes(color = grade))+
+  scale_color_brewer()+theme_dark()+
+  ylim(0, quantile(wwine_boe$total.sulfur.dioxide, 0.99))+
+  labs(x='Alcohol(% by volume)',
+       y='Total sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across total.sulfur.dioxide with grade')
+
+p2 <- ggplot(aes(x= alcohol, y= chlorides),data = wwine_boe)+ 
+  geom_point(aes(color = grade))+
+  scale_color_brewer()+theme_dark()+
+  ylim(0, quantile(wwine_boe$chlorides, 0.99))+
+  labs(x='Alcohol(% by volume)',
+       y='Chlorides(g / dm^3)' ,
+       title='Scatter of density across chlorides with grade')
+
+p3 <- ggplot(aes(x= alcohol, y= free.sulfur.dioxide),data = wwine_boe)+ 
+  geom_point(aes(color = grade))+
+  scale_color_brewer()+theme_dark()+
+  ylim(0, quantile(wwine_boe$free.sulfur.dioxide, 0.99))+
+  labs(x='Alcohol(% by volume)',
+       y='Free sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across free.sulfur.dioxide with grade')
+
+grid.arrange(p1, p2, p3, ncol = 2)
+```
+
+
+- 由于酒精浓度与相关变量的研究在双变量中已经展开，在这里再次输出散点图是为了研究加上评分的维度后，看能不能探究出什么范围内的酒精浓度与其他杂质变量浓度可以得到评分比较高的葡萄酒
+- 展开看上图的话就会发现在酒精浓度超过12且总二氧化硫含量超过100的时候，产出高质量就的概率非常大
+- 氯化物的探究也非常符合双变量的研究，只要氯化物含量越低，葡萄酒的频分就会越高
+- 其次酒精浓度超过12且游离二氧化硫含量在25-50的时候，产出高质量就的概率也比较大
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+ggplot(aes(x= grade, y= alcohol),data = wwine_boe)+ 
+  geom_boxplot()+
+  labs(y='Alcohol(% by volume)',
+       x='grade(contain bad and excellent)' ,
+       title='Boxplot of alcohol across grade')
+```
+
+>输出如上箱线图图，如果我们取酒精浓度大于11的阶段，我们可以筛除少量优质葡萄酒数据，但是品质较差的葡萄酒被筛除的更多，所以我们取酒精浓度大于11的来研究密度和各个大分子物质和葡萄酒质量之间的关系，根据之前双变量研究后的结果，我们只重点研究跟密度相关性强的变量
+
+```{r echo=FALSE, warning=FALSE, message = FALSE}
+wwine_boe_highcoh <- subset(wwine_boe, alcohol >=11)
+```
+
+```{r echo=FALSE,warning=FALSE,message = FALSE,fig.width=15, fig.height=15}
+p1 <- ggplot(aes(x=density, y=residual.sugar),data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Residual sugar(g / dm^3)' ,
+       title='Scatter of density across residual.sugar with grade')
+
+p2 <- ggplot(aes(x=density, y=total.sulfur.dioxide),
+             data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Total sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across total.sulfur.dioxide with grade')
+
+p3 <- ggplot(aes(x=density, y=free.sulfur.dioxide),
+             data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Free sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across free.sulfur.dioxide with grade')
+
+p4 <- ggplot(aes(x=density, y=fixed.acidity),data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Fixed acidity(g / dm^3)' ,
+       title='Scatter of density across fixed.acidity with grade')
+
+p5 <- ggplot(aes(x=density, y=chlorides),data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Chlorides(g / dm^3)' ,
+       title='Scatter of density across chlorides with grade')
+
+grid.arrange(p1, p2, p3, p4, p5, ncol = 2)
+```
+
+- 控制了酒精含量这个变量后输出的散点图如上，总体来说，想从控制密度和大分子物质来把握评分规律不太成功，可以看到除了两种二氧化硫稍微体现了一点规律外，对密度影响比较大的residual.sugar基本不能预测评分，这也呼应了之前相关性中残留糖与评分相关性很低
+- 规律性最强的free.sulfur.dioxide中，结合之前在酒精浓度中的探究，保持酒精浓度在12-14，游离二氧化硫在25-50之间，葡萄酒密度在0.988-0.995都比较容易出品质好的葡萄酒
+- 规律性次强的total.sulfur.dioxide中，结合之前在酒精浓度中的探究，保持酒精浓度在12-14，总二氧化硫在100-200之间，葡萄酒密度在0.985-0.995都比较容易出品质好的葡萄酒
+
+## 问题回答
+
+###  探讨你在这部分探究中观察到的一些关系。通过观察感兴趣的特性，是否存在相互促进的特性？
+是的，我发现控制好酒精浓度和二氧化硫的含量在一定的区间内、葡萄酒的密度也保持在一定区间内，是有比较大的概率获得优质的葡萄酒的。
+
+### 这些特性之间是否存在有趣或惊人的联系呢？
+是的只要保持酒精浓度在12-14，游离二氧化硫在25-50之间、总二氧化硫在100-200之间并且葡萄酒密度在0.988-0.995，是很容易得到品质好的葡萄酒，但是需要注意的是，因为样本量比较少（只有不到两百的bad和excellent），所以这个预测可能会有误差
+
+### 选项：你是否创建过数据集的任何模型？讨论你模型的优缺点。
+没有，因为样本量太少了，只有不到两百的bad和excellent，所以如果建立预测模型，可能会有很大误差，如果可以获取更多的数据的话，也许可以更近一步研究。
+
+## 定稿图与总结
+
+### 绘图一：氯化物与评分的散点和箱线图
+```{r echo=FALSE,warning=FALSE, message = FALSE}
+ggplot(aes(x = grade, y = chlorides), data = wwine) + 
+  geom_jitter(alpha = 1/8)+ 
+  geom_boxplot(alpha = 1/5, color = '#03A89E')+
+  ylim(0, quantile(wwine$chlorides, 0.98))+
+  stat_summary(fun.y = 'mean', geom = 'point', color='red')+
+  labs(x='Grade(between bad and excellent)',
+       y='Chlorides(g / dm^3)' ,
+       title='Boxplot of chlorides across grade')+
+  scale_x_discrete(labels=c('bad','medium_low',
+                            'medium','medium_high','excellent'))
+```
+
+### 描述一
+- 从数据集的背景资料中可以的值，葡萄酒中的氯化物主要来自氯化钠（盐）
+- 之前在chlorides与density中可以看出，chlorides在葡萄酒中并没有占有很大分量，但是他与grade的相关性却不低，可以说微小的含量变化就有可能影响评分
+- 从上图中看出，chlorides与葡萄酒的质量是一个负相关的关系，想要得到优质的葡萄酒，降低chlorides含量总不会出错
+- 这个结论多少让我有点诧异，因为常识来说少量的盐并不会对酒有口味上的影响，况且葡萄酒中的含量几乎不到矿泉水中的三分之一（矿泉水为0.3~0.8g/dm3）
+
+### 绘图二：酒精浓度与相关变量的品质散点图
+```{r echo=FALSE,warning=FALSE,fig.width=15,fig.height=15}
+p1 <- ggplot(aes(x= alcohol, y= total.sulfur.dioxide),data = wwine_boe)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  ylim(0, quantile(wwine_boe$total.sulfur.dioxide, 0.99))+
+  labs(x='Alcohol(% by volume)',
+       y='Total sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across total.sulfur.dioxide with grade')
+
+p2 <- ggplot(aes(x= alcohol, y= chlorides),data = wwine_boe)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  ylim(0, quantile(wwine_boe$chlorides, 0.99))+
+  labs(x='Alcohol(% by volume)',
+       y='Chlorides(g / dm^3)' ,
+       title='Scatter of density across chlorides with grade')
+
+p3 <- ggplot(aes(x= alcohol, y= free.sulfur.dioxide),data = wwine_boe)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  ylim(0, quantile(wwine_boe$free.sulfur.dioxide, 0.99))+
+  labs(x='Alcohol(% by volume)',
+       y='Free sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across free.sulfur.dioxide with grade')
+
+grid.arrange(p1, p2, p3, ncol = 2)
+```
+
+### 描述二
+- 在这里输出酒精浓度与相关变量的散点图的同事时上评分的维度（这三个变量是在双变量探究时，与酒精浓度相关性比较高的三个量），看能不能探究出什么范围内的酒精浓度与其他杂质变量浓度可以得到评分比较高的葡萄酒
+- 查看上图，会发现在酒精浓度超过12且总二氧化硫含量超过100的时候，产出高质量就的概率非常大
+- 氯化物的探究也非常符合刚刚研究，只要氯化物含量越低，葡萄酒的评分就会越高
+- 其次酒精浓度超过12且游离二氧化硫含量在25-50的时候，产出高质量就的概率也比较大
+
+### 绘图三：葡萄酒密度与相关变量的品质散点图
+```{r echo=FALSE,warning=FALSE,fig.width=15,fig.height=15}
+p1 <- ggplot(aes(x=density, y=residual.sugar),data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Residual sugar(g / dm^3)' ,
+       title='Scatter of density across residual.sugar with grade')
+
+p2 <- ggplot(aes(x=density, y=total.sulfur.dioxide),
+             data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Total sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across total.sulfur.dioxide with grade')
+
+p3 <- ggplot(aes(x=density, y=free.sulfur.dioxide),
+             data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Free sulfur dioxide(mg / dm^3)' ,
+       title='Scatter of density across free.sulfur.dioxide with grade')
+
+p4 <- ggplot(aes(x=density, y=fixed.acidity),data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Fixed acidity(g / dm^3)' ,
+       title='Scatter of density across fixed.acidity with grade')
+
+p5 <- ggplot(aes(x=density, y=chlorides),data = wwine_boe_highcoh)+ 
+  geom_point(aes(color = grade))+
+  scale_fill_brewer()+theme_dark()+
+  labs(x='Density(g / cm^3)',
+       y='Chlorides(g / dm^3)' ,
+       title='Scatter of density across chlorides with grade')
+
+grid.arrange(p1, p2, p3, p4, p5, ncol = 2)
+```
+
+### 描述三
+- 在这里输出葡萄酒密度与相关变量的散点图，是在控制了酒精含量在11-14的范围内，同时加上评分的维度（这无个变量是在双变量探究时，与葡萄酒密度相关性比较高的五个量），看能不能探究出什么范围内的葡萄酒密度与其他杂质变量浓度可以得到评分比较高的葡萄酒
+- 这个散点图总体来说，想从控制密度和大分子物质来把握评分规律不太成功，可以看到除了两种二氧化硫稍微体现了一点规律外，对密度影响比较大的residual.sugar基本不能预测评分，这也呼应了之前相关性中残留糖与评分相关性很低
+- 规律性最强的free.sulfur.dioxide中，结合之前在酒精浓度中的探究，保持酒精浓度在12-14，游离二氧化硫在25-50之间，葡萄酒密度在0.988-0.995都比较容易出品质好的葡萄酒
+- 规律性次强的total.sulfur.dioxide中，结合之前在酒精浓度中的探究，保持酒精浓度在12-14，总二氧化硫在100-200之间，葡萄酒密度在0.985-0.995都比较容易出品质好的葡萄酒
+
+
+## 反思
+- 在进行这个数据集探究之前，我做了一定的葡萄酒酿造北京调查， 以保证我对相关化学反应有一定的了解。该数据集有4898条数据和13个变量，在分析的时候我按照类别对相似的变量放在一起研究，比如与酸度相关的变量：fixed.acidity，volatile.acidity，citric.acid，pH
+- 因为评分中3、4分和8、9分都非常少，如果后面要进行相关性研究，可能会造成影响，所以把3、4分合并，8、9分合并进行研究，并创立grade列
+- 双变量中发现与评分最相关的三各变量，alcohol、density和chlorides，并接着这个思路探究了加上评分维度的alcohol和density与各自影响它们的物质，从而得出上面三个图和相关的结论
+- 当然一定要说的是，这次分析有很多考虑不周全的地方，也是有数据集分析得来的感兴趣的点就挖下去了，可能有很多更好的切入点没有考虑到，后面会继续努力
+- 然后就是在分析bad&excellent这块，由于数据比较少，可能会有不准确的结论，在此申明
+- 本项目对未来的工作的意义有很多，这里简单说两点，着手项目前一定提前了解项目背景或者行业背景，不然很容易因为不了解酿酒背景而无法区分什么数据时脏数据什么是干净的；其次如果根据数据分析出来的内容与常识相违背一定要检查自己的分析代码是否正确，数据是否干净，在前两者没有问题的前提下这就是数据给我们的认知升级，最好还能在谷歌查询到相关论文佐证你的分析结果。
